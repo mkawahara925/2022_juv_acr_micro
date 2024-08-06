@@ -1,0 +1,74 @@
+---
+title: "03.5_Alpha_Div_Stats"
+Output: html_document
+Date created: 04/22/24
+Author: Mackenzie Kawahara
+Last edited:04.26.24 Added stas for simpson, invsimp & observed
+Overview:
+---
+
+## 1. ANOVA stats tests ##
+```{r}
+alphaDiv
+#Checking assumptions...from stats classes to see if in violation
+plot(two.way, which=1) #Residuals vs fitted
+plot(two.way, which=2) # Q-Q plot for normality
+
+#Predicts no interaction between independent variables
+#Shannon
+two.way <-aov(Shannon ~ herbivory + treatment, data = alphaDiv)
+summary(two.way)
+#Test interaction between independent variables
+interaction <-aov(Shannon ~ herbivory * treatment, data = alphaDiv)
+
+#Simpson
+two.way_simp <-aov(Simpson ~ herbivory + treatment, data = alphaDiv)
+summary(two.way_simp)
+
+#InvSimp
+two.way_invsimp <-aov(InvSimpson ~ herbivory + treatment, data = alphaDiv)
+summary(two.way_invsimp)
+
+#Observed
+two.way_obs <-aov(Observed ~ herbivory + treatment, data = alphaDiv)
+summary(two.way_obs)
+
+```
+
+
+## 2. Linear model stats ##
+```{r}
+shan_lm <-lm(Shannon~herbivory + treatment + herbivory*treatment, data = alphaDiv) 
+summary(shan_lm)
+#1x1 is significant(?) <-need to check significant intercept
+
+alphaDiv$one <-as.numeric(alphaDiv$herbivory == "1x1")
+summary(lm(Shannon ~ one, data = alphaDiv))
+
+alphaDiv$two <-as.numeric(alphaDiv$herbivory == "2x2")
+summary(lm(Shannon ~ two, data = alphaDiv))
+
+alphaDiv$three <-as.numeric(alphaDiv$herbivory == "3x3")
+summary(lm(Shannon ~ three, data = alphaDiv))
+
+alphaDiv$open <-as.numeric(alphaDiv$herbivory == "Open")
+summary(lm(Shannon ~ open, data = alphaDiv))
+```
+## 3. Linear Mixed Model ##
+```{r}
+library(lme4)
+library(lmerTest)
+library(emmeans)
+
+mod1 <-lmer(Shannon ~ herbivory + treatment + herbivory*treatment + (1|cage), data = alphaDiv)
+mod2 <-lmer(Shannon ~ herbivory + treatment + (1|cage), data = alphaDiv)
+anova(mod1, mod2)
+#p value for comparing mod1 and mod2
+```
+
+
+
+
+
+
+

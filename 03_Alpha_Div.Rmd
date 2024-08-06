@@ -1,0 +1,328 @@
+---
+title: "03_Alpha_Div"
+Output: html_document
+Date created: 04/01/24
+Author: Mackenzie Kawahara
+Last edited: 04.26.24 #7 on
+Overview: Calculations for alpha diversity metrics at rarefied/unrarefied & at Family/ASV levels
+---
+```{r}
+library(Rmisc)
+```
+
+## 1. Agglomerate to Family level ##
+```{r}
+#Based on samples and talking with Alex, ours are likely only able to go down to Family level without losing too much info
+#This is only looking at 1000 depth (microbes_rare)
+microbes_rare.fam <- tax_glom(microbes_rare, taxrank = "Family", NArm=FALSE)
+saveRDS(microbes_rare.fam, "03_Alpha_Div/microbes_rare.fam.rds")
+```
+
+## 2. Calculate Shannon, InvSimpson, & Simpson diversity metrics at 1000 depth ##
+```{r}
+alphaDiv <- estimate_richness(microbes_rare.fam, measures = c("Shannon", "InvSimpson", "Simpson"))
+
+alphaDiv$Samples <-rownames(alphaDiv)
+
+#Combine alpha diversity with sample metadata
+microbes_rare.fam@sam_data$Samples <-rownames(microbes_rare.fam@sam_data) #Added 'Samples' column to sam_data to merge with alphaDiv
+alphaDiv <- merge(as.matrix(microbes_rare.fam@sam_data), alphaDiv, by = "Samples")
+
+#Save dataframe
+readr::write_csv(alphaDiv, here::here("03_Alpha_Div/alphaDiv.csv"))
+```
+
+## 3. Plot rough graphs ##
+#Shannon Diversity
+```{r}
+#Plot 1
+plot_blank_shan <-  ggplot(alphaDiv, aes(x = as.factor(treatment), y = Shannon, color = treatment)) + 
+  scale_color_manual(values = c("#666666", "blue")) + geom_boxplot(lwd = 1.1, outlier.colour = "NA") +
+  stat_summary(fun = mean, geom = 'line', mapping = aes(group = treatment, color = treatment), 
+               linewidth = 1.25, position = position_dodge(width = 0.9)) #Only box plot, no data points included
+
+#Plot 2
+p_cp_nutrients_boxplot <-  ggplot(alphaDiv, aes(x = herbivory, y = Shannon)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y="Shannon Diversity Index")
+
+ggsave(plot=p_cp_nutrients_boxplot, "Graphs/Shannon_cp_nutrients_boxplot.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+
+#Plot 3
+P1 <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = Shannon, color = treatment)) +
+  theme_bw()+
+  theme(legend.position = c(.95, .95),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    ) + 
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Shannon Diversity Index")
+
+ggsave(plot=P1, "Graphs/Shannon_P1.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+
+#Stats summary using Rmisc package
+alpha_summary = summarySE(alphaDiv, measurevar = "Shannon", groupvars = c("herbivory", "treatment"))
+
+#Plot 4 - the average with CI
+p_summary = ggplot(alpha_summary, aes(x=herbivory, y=Shannon))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = Shannon - ci, ymax = Shannon + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Shannon Diversity Index")
+
+ggsave(plot=p_summary, "Graphs/Shannon_p_summary.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+```
+
+#Simpson
+```{r}
+p1_simp <-  ggplot(alphaDiv, aes(x = herbivory, y = Simpson)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y= "Simpson Diversity Index")
+
+p2_simp <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = Simpson, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Simpson Diversity Index")
+
+#Stats summary using Rmisc package
+alpha_summary_simp = summarySE(alphaDiv, measurevar = "Simpson", groupvars = c("herbivory", "treatment"))
+
+#Plot with the average with CI
+p_summary_simp = ggplot(alpha_summary_simp, aes(x=herbivory, y=Simpson))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = Simpson - ci, ymax = Simpson + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Simpson Diversity Index")
+
+ggsave(plot=p_summary_simp, "Graphs/alpha_div_fam/Simpson_p_summary.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+```
+
+#InvSimpson
+```{r}
+#Plot 1
+p1_invsimp <-  ggplot(alphaDiv, aes(x = herbivory, y = InvSimpson)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y= "Inverse Simpson Diversity Index")
+
+p2_invsimp <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = InvSimpson, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Inverse Simpson Diversity Index")
+
+#Stats summary using Rmisc package
+alpha_summary_invsimp = summarySE(alphaDiv, measurevar = "InvSimpson", groupvars = c("herbivory", "treatment"))
+
+#Plot with the average with CI
+p_summary_invsimp = ggplot(alpha_summary_invsimp, aes(x=herbivory, y=InvSimpson))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = InvSimpson - ci, ymax = InvSimpson + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Inverse Simpson Diversity Index")
+
+ggsave(plot=p_summary_invsimp, "Graphs/alpha_div_fam/InvSimpson_p_summary.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+```
+
+## 4. Calculate Observed, Chao, & Faith'sPD diversity metric at 5000 depth - add to alphaDiv dataframe ##
+```{r}
+#Agglomerate to Family level
+microbes_rare_5000.fam <- tax_glom(microbes_rare_5000, taxrank = "Family", NArm=FALSE)
+
+alphaDiv_5000 <- estimate_richness(microbes_rare_5000.fam, measures = c("Observed", "Chao1"))
+alphaDiv_5000$Samples <-rownames(alphaDiv_5000)
+
+#Combine alpha diversity with sample metadata
+microbes_rare_5000.fam@sam_data$Samples <-rownames(microbes_rare_5000.fam@sam_data) #Added 'Samples' column to sam_data to merge with alphaDiv
+
+#alphaDiv <-merge(obs_alphaDiv, alphaDiv, by = "Samples") <-originally did this code, but it didn't include the InvSimpson column so tried the code in line 114. 114 was giving an error, don't know what I did but now when I look at alphaDiv all three diversity metrics are there so I did soemthing right??
+alphaDiv <- merge(alphaDiv_5000, alphaDiv, by = "Samples") #This code was giving an error, but now when I look at alphaDiv it has 
+
+#Faith's PD
+alphaDiv_FPD <-estimate_richness_wPD(microbes_rare_5000, measures = ("FaithPD"))
+alphaDiv_FPD$Samples <-rownames(alphaDiv_FPD)
+
+alphaDiv <-merge(alphaDiv_FPD, alphaDiv, by = "Samples")
+
+#Save dataframe
+readr::write_csv(alphaDiv, here::here("03_Alpha_Div/all_alphaDiv.csv"))
+```
+
+## 5. Plot rough graphs ##
+#Observed Richness
+```{r}
+p1_obs <-  ggplot(alphaDiv, aes(x = herbivory, y = Observed)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y="Observed Richness")
+
+p2_obs <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = Observed, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Observed Richness")
+
+#Stats summary using Rmisc package
+alpha_summary_obs = summarySE(alphaDiv, measurevar = "Observed", groupvars = c("herbivory", "treatment"))
+
+#Plot with the average with CI
+p_summary_obs = ggplot(alpha_summary_obs, aes(x=herbivory, y=Observed))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = Observed - ci, ymax = Observed + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Observed Richness")
+```
+
+#Chao1
+```{r}
+p1_chao <-  ggplot(alphaDiv, aes(x = herbivory, y = Chao1)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y="Chao1 Richness")
+
+p2_chao <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = Chao1, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Chao1 Richness")
+
+#Stats summary using Rmisc package
+alpha_summary_chao = summarySE(alphaDiv, measurevar = "Chao1", groupvars = c("herbivory", "treatment"))
+
+#Plot with the average with CI
+p_summary_chao = ggplot(alpha_summary_chao, aes(x=herbivory, y=Chao1))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = Chao1 - ci, ymax = Chao1 + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Chao1 Diversity Index")
+```
+
+#Faith's PD
+```{r}
+p1_faith <-  ggplot(alphaDiv, aes(x = herbivory, y = FaithPD)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y="Faith's Phylogenetic Diversity")
+
+p2_faith <- ggplot(alphaDiv,aes(x = as.factor(treatment), y = Chao1, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Faith's Phylogenetic Diversity")
+
+#Stats summary using Rmisc package
+alpha_summary_faith = summarySE(alphaDiv, measurevar = "FaithPD", groupvars = c("herbivory", "treatment"))
+
+#Plot with the average with CI
+p_summary_faith = ggplot(alpha_summary_faith, aes(x=herbivory, y=FaithPD))+
+  geom_point(size = 2)+
+  geom_errorbar(aes(ymin = FaithPD - ci, ymax = FaithPD + ci), width=0.3)+
+  theme_classic()+
+  facet_grid(~treatment)+
+  labs(x="Consumer Pressure", y="Faith's Phylogenetic Diversity Index")
+```
+
+## 6. Shannon Diversity - 1000 depth at ASV level ##
+```{r}
+#AV suggested to look at some measurements unrarefied & at the ASV not fam level
+#04.09.24 just chose randomly to start with Shannon
+
+#1000 depth but at ASV Level
+alphaDiv_asv <- estimate_richness(microbes_rare, measures = c("Shannon", "InvSimpson", "Simpson"))
+
+alphaDiv_asv$Samples <-rownames(alphaDiv_asv)
+
+#Combine alpha diversity with sample metadata
+microbes_rare@sam_data$Samples <-rownames(microbes_rare@sam_data) #Added 'Samples' column to sam_data to merge with alphaDiv
+alphaDiv_asv <- merge(as.matrix(microbes_rare@sam_data), alphaDiv_asv, by = "Samples")
+
+#Graph
+p1_shan_asv <-  ggplot(alphaDiv_asv, aes(x = herbivory, y = Shannon)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y= "Shannon Diversity Index at the ASV Level")
+
+p2_shan_asv <- ggplot(alphaDiv_asv,aes(x = as.factor(treatment), y = Shannon, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Shannon Diversity Index at the ASV Level")
+
+```
+
+## 7. Shannon Diversity - Unrarefied at family level ##
+```{r}
+microbes.fam <- tax_glom(microbes.filt, taxrank = "Family", NArm=FALSE)
+alphaDiv_unrare <- estimate_richness(microbes.fam, measures = c("Shannon", "InvSimpson", "Simpson"))
+
+alphaDiv_unrare$Samples <-rownames(alphaDiv_unrare)
+
+#Combine alpha diversity with sample metadata
+microbes.fam@sam_data$Samples <-rownames(microbes.fam@sam_data) #Added 'Samples' column to sam_data to merge with alphaDiv
+alphaDiv_unrare <- merge(as.matrix(microbes.fam@sam_data), alphaDiv_unrare, by = "Samples")
+
+#Graph
+p1_shan_unrare_fam <-  ggplot(alphaDiv_unrare, aes(x = herbivory, y = Shannon)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y= "Shannon Diversity Index at the Family Level (Unrarefied)")
+
+p2_shan_unrare_fam <- ggplot(alphaDiv_unrare,aes(x = as.factor(treatment), y = Shannon, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Shannon Diversity Index at the Family Level (Unrarefied)")
+```
+
+## 8. Shannon Diversity - Unrarefied at ASV level ##
+```{r}
+alphaDiv_unrare_asv <- estimate_richness(microbes.filt, measures = c("Shannon", "InvSimpson", "Simpson"))
+
+alphaDiv_unrare_asv$Samples <-rownames(alphaDiv_unrare_asv)
+
+#Combine alpha diversity with sample metadata
+microbes.filt@sam_data$Samples <-rownames(microbes.filt@sam_data) #Added 'Samples' column to sam_data to merge with alphaDiv
+alphaDiv_unrare_asv <- merge(as.matrix(microbes.filt@sam_data), alphaDiv_unrare_asv, by = "Samples")
+
+#Graph
+p1_shan_unrare_asv <-  ggplot(alphaDiv_unrare_asv, aes(x = herbivory, y = Shannon)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y= "Shannon Diversity Index at the ASV Level (Unrarefied)")
+
+p2_shan_unrare_asv <- ggplot(alphaDiv_unrare_asv,aes(x = as.factor(treatment), y = Shannon, color = treatment)) +
+  geom_boxplot(lwd = 1.1, outlier.colour = "NA") + 
+  geom_point(position = "jitter", alpha = 0.5) +
+  scale_color_manual(values = c("slategray2", "mediumseagreen")) +
+  labs(x="Treatment", y="Shannon Diversity Index at the ASV Level (Unrarefied)")
+```
+

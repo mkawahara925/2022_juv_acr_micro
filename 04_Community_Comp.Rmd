@@ -1,0 +1,102 @@
+---
+title: "04_Community_Comp"
+Output: html_document
+Date created: 04/09/24
+Author: Mackenzie Kawahara
+Last edited:
+Overview:
+---
+#This script is modified from Alex Vompes's R script 'community composition.R'
+
+## 1. Setup ##
+```{r}
+set.seed(123)
+
+library(ggplot2)
+library(microViz)
+library(dplyr)
+library(phyloseq)
+library(ggpubr)
+
+#Load data if not already done so
+microbes_rare.fam <-readRDS("03_Alpha_Div/microbes_rare.fam.rds")
+```
+
+## 2. Identify top 20 microbes 1000 depth rarefied & Family level ##
+```{r}
+# Stacked bar with top 20 microbial families data processing
+Top20Fams = names(sort(taxa_sums(microbes_rare.fam), TRUE)[1:20])
+Top20Fams
+
+#Replace the taxonomy of non-top families with "Other" manually to get 20 taxa w Other
+write.csv(tax_table(microbes_rare.fam), "04_Community_Comp/taxother_rarefied.csv")
+
+#Assemble new phyloseq object with "other" in taxtable
+tax_table_other = read_excel("04_Community_Comp/tax_other_rarefied.xlsx")
+tax_table_other = tax_table_other %>% 
+  tibble::column_to_rownames("asv")
+tax_table_other = as.matrix(tax_table_other)
+TAX = tax_table(tax_table_other)
+Rarefied_w_other = phyloseq(TAX, sample_data(microbes_rare.fam), 
+                            otu_table(microbes_rare.fam))
+
+#Save as RDS for downstream access and check file
+saveRDS(Rarefied_w_other, "04_Community_Comp/ps_for_stacked_bar.rds")
+Rarefied_w_Other = readRDS("04_Community_Comp/ps_for_stacked_bar.rds")
+```
+
+```{r}
+#merge samples by covariates of interest
+merge1 = merge_samples(Rarefied_w_Other, "treatment")
+variable1 = as.character(get_variable(Rarefied_w_Other, "treatment"))
+variable2 = as.character(get_variable(Rarefied_w_Other, "herbivory"))
+sample_data(Rarefied_w_Other)$treatbyherb <- mapply(paste0, variable1, variable2, 
+                                                    collapse = "_")
+merge = merge_samples(Rarefied_w_Other, "treatbyherb")
+
+relative = transform_sample_counts(merge, function(x) {x/sum(x)})
+
+```
+## 3. Stacked bar plot of bacteria taxa ##
+```{r}
+#For plots that need faceting, make manual modifications
+x = data.frame(sample_data(relative))
+x$treatbyherb = NULL
+x$herbivory = NULL
+x$treatment = NULL
+x$treatment = c("Ambient", "Ambient", "Ambient", "Ambient",
+                "Enriched", "Enriched", "Enriched", "Enriched")
+x$cp = c("1x1", "2x2", "3x3", "Open", "1x1", "2x2", "3x3", "Open")
+x$cp = factor(x$cp, levels = c("1x1", "2x2", "3x3", "Open"))
+x = sample_data(x)
+sample_data(relative) = x
+
+# Make the plot====
+cbPalette = c("gray", "#56B4E9", "#E69F00", "coral3",
+              "#196F3D", "#922B21", "#7A604B", "#C5B5D4", 
+              "#009E73", "#0072B2", "purple", 
+              "#CC79A7", "pink", "#FF468F", "#89472F", 
+              "#F0E442", "#FF4040", "#66CCCC", "darkorange", 
+              "#B4CEFF", "darkblue")
+
+com_comp_rare_fam=plot_bar(relative, fill = "Family", 
+           x="cp")+
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_bar(stat="identity") + 
+  scale_fill_manual(values=cbPalette) + 
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1)) +
+  theme(axis.line = element_line(color='black'),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) +
+  xlab("Consumer Pressure Level") + 
+  ylab("Relative Abundance")
+com_comp_rare_fam$data$Family = factor(com_comp_rare_fam$data$Family)
+com_comp_rare_fam$data$Family = relevel(com_comp_rare_fam$data$Family, "Other")
+
+ggsave(plot=com_comp_rare_fam, "04_Community_Comp/com_comp_rare_fam.jpeg", units = "mm", scale = 0.8,
+       height = 185, width = 300, dpi = 1000)
+```
+
+
