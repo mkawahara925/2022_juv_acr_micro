@@ -1,0 +1,252 @@
+---
+title: "05_Beta_Div"
+Output: html_document
+Date created: 05/03/24
+Author: Mackenzie Kawahara
+Last edited: 
+Overview: Beta diversity metrics
+---
+
+```{r setup}
+library(ggplot2)
+library(ggpubr)
+library(phyloseq)
+library(plyr)
+library(dplyr)
+library(vegan)
+library(ggsignif)
+```
+
+## 1. Calculating PCoA plot with weighted Unifrac distances ##
+```{r}
+microbes.fam #Unrarefied & at family level
+
+ord_families = ordinate(microbes.fam, "PCoA", "unifrac", weighted=TRUE)
+
+ordination_df = plot_ordination(microbes.fam, ord_families, type="samples", 
+                                color="herbivory", justDF = TRUE)
+
+saveRDS(ordination_df, "05_Beta_Div/ordination_df.rds")
+write.csv(ordination_df, "05_Beta_Div/ordination_dr.csv")
+#To get the % for the y and x axis
+#ordination_df = plot_ordination(microbes.fam, ord_families, type="samples", color="herbivory")
+#ordination_df produces 65.1 and 9
+```
+
+## 2. Plot PCoA graphs ##
+```{r}
+cbPalette = c("#000000", "#56B4E9", "#C5B5D4", "#009E73")
+p1=ggplot(ordination_df, aes(Axis.1, Axis.2, color=herbivory, fill=herbivory)) +
+  theme_bw()+
+  geom_point(size=3, alpha=0.4)+
+  stat_ellipse(geom = "polygon", type="norm", 
+               alpha=0, aes(fill=herbivory), linewidth=1.2)+
+  stat_ellipse(geom = "polygon", type="euclid", 
+               aes(fill=herbivory), linewidth=10, level=0.001)+
+  facet_grid(.~treatment)+
+  theme(text = element_text(size = 26), 
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  scale_color_manual(values=cbPalette) + 
+  scale_fill_manual(values=cbPalette)+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5))+
+  theme(legend.position="right")+
+  xlab("PCoA Axis 1 [65.4%]")+
+  ylab("PCoA Axis 2 [9%]")
+
+p2=ggplot(ordination_df, aes(Axis.1, Axis.2, color=herbivory, fill=herbivory)) +
+  theme_bw()+
+  geom_point(size=3, alpha=0.4)+
+  facet_grid(.~treatment)+
+  theme(text = element_text(size = 26), 
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  scale_color_manual(values=cbPalette) + 
+  scale_fill_manual(values=cbPalette)+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5))+
+  theme(legend.position="right")+
+  xlab("PCoA Axis 1 [65.4%]")+
+  ylab("PCoA Axis 2 [9%]")
+
+cpalette = c("slategray2", "mediumseagreen")
+p3=ggplot(ordination_df, aes(Axis.1, Axis.2, color=treatment, fill=treatment)) +
+  theme_bw()+
+  geom_point(size=2, alpha=0.4)+
+  stat_ellipse(geom = "polygon", type="norm", 
+               alpha=0, aes(fill=treatment), linewidth=1.2)+
+  stat_ellipse(geom = "polygon", type="euclid", 
+               aes(fill=treatment), linewidth=10, level=0.001)+
+  theme(text = element_text(size = 15), 
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  scale_color_manual(values=cpalette) + 
+  scale_fill_manual(values=cpalette)+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5))+
+  theme(legend.position="left")+
+  xlab("PCoA Axis 1 [65.4%]")+
+  ylab("PCoA Axis 2 [9%]")
+
+ggsave(plot=p3, "Graphs/pcoa_p3.jpeg", units="mm", height = 100, width = 180, scale=1, dpi = 700)
+
+```
+
+## 3. PERMANOVA Stats ##
+```{r}
+#Dispersion calculated by nutrients
+disp_treatment = betadisper(`dist_uni`, stat.data.r$treatment, type = "centroid")
+df_treat = data.frame(Distance_to_centroid=disp_treatment$distances, stat.data.r)
+write.csv(df_treat, "05_Beta_Div/beta_div_nutrients.csv")
+
+t.test(Distance_to_centroid~treatment, data =df_treat, alternative = "two.sided")
+
+#Dispersion calculated by consumers
+disp_consumers = betadisper(dist_uni, stat.data.r$herbivory, type = "centroid")
+df_cons = data.frame(Distance_to_centroid=disp_consumers$distances, stat.data.r)
+write.csv(df_cons, "05_Beta_Div/beta_div_cons.csv")
+
+#Plot box plot to see differences in dispersion
+p_disp_boxplot <-  ggplot(df_treat, aes(x = herbivory, y = Distance_to_centroid)) + 
+  theme_classic()+
+  facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Consumer Pressure", y="Distance to Centroid")
+
+p_disp_boxplot_stats <-  ggplot(df_treat, aes(x = treatment, y = Distance_to_centroid)) + 
+  theme_classic()+
+  #facet_grid(~treatment)+
+  geom_boxplot(alpha = 0.6)+
+  geom_point(position = "jitter", alpha = 0.5)+
+  labs(x="Nutrient Treatment", y="Distance to Centroid")+
+  geom_signif(comparisons=list(c("Ambient","Enriched")),
+              test = "t.test",
+              map_signif_level =c("***"=0.001, "**"=0.01, "*"=0.05),
+              color="black")
+
+#Ran the following code first, before the betadisper & t.test
+dist_uni = phyloseq::distance(microbes.fam, "unifrac", weighted=TRUE)
+sampledf_dist = as.data.frame(sample_data(microbes.fam))
+
+stat.data.r = as(sample_data(microbes.fam), "data.frame")
+adonis2(dist_uni ~ treatment, data = stat.data.r)
+
+adonis2(dist_uni ~ herbivory, data = stat.data.r)
+
+#Differences between treatments due to dispersion (vs centroid distances)
+#Ambient plots have higher dispersion than the enriched plots, but similar averages based on close centroid locations
+#Centroid: mean community composition
+```
+
+## 4. ANCOMBC Stats ##
+```{r}
+#Load in the libraries
+library(phyloseq)
+library(here)
+library(tidyverse)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("ANCOMBC")
+
+library(ANCOMBC)
+
+#Load filtered ps at family level
+microbes.fam #unrarefied & at family level
+set.seed(1)
+
+output_final = ancombc2(data = microbes.fam, assay_name = "counts",
+                        fix_formula = "treatment",
+                        p_adj_method = "holm", pseudo = 0, pseudo_sens = TRUE,
+                        prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                        alpha = 0.05, n_cl = 2, verbose = TRUE,
+                        iter_control = list(tol = 1e-2, max_iter = 50, verbose = TRUE),
+                        em_control = list(tol = 1e-5, max_iter = 100),
+                        lme_control = lme4::lmerControl(optimizer ="Nelder_Mead"),
+                        mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                        trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                                    nrow = 2, byrow = TRUE),
+                                                             matrix(c(-1, 0, 1, -1), nrow = 2,
+                                                                    byrow = TRUE)), 
+                                             node = list(2, 2), 
+                                             solver = "ECOS", B = 100))
+res_prim = output_final$res
+head(res_prim)
+#1) log fold changes, 2) standard errors, 3) test statistics, 4) p-values, 5) adjusted p-values, 6) indicators denoting whether the taxon is differentially abundant (TRUE) or not (FALSE), and 7) indicators denoting whether the taxon passed the sensitivity analysis (TRUE) or not (FALSE).
+
+p_da_bac = ggplot(data=res_prim, aes(x=lfc_treatmentEnriched, 
+                              y=q_treatmentEnriched, 
+                              col=diff_treatmentEnriched))+ 
+  geom_text(data = res_prim %>% filter(diff_treatmentEnriched==TRUE),
+             aes(label=taxon),
+            nudge_x = 0.15, nudge_y = -0.02,
+             check_overlap = TRUE)+
+  geom_hline(yintercept = 0.05, linetype="dashed")+
+  geom_point() + 
+  theme_classic()+
+  theme(legend.position = "right")
+
+#Blue: significantly different taxa between the ambient and enriched plots
+#The ASVs to the left of 0 were depleted in the nutrient enriched treatment relative to ambient, while the ones to the right of 0 were depleted in the ambient treatments relative to the enriched treatments
+```
+
+## 5. DA Taxa LFC graph ##
+```{r}
+df_enrich = res_prim %>%
+    dplyr::select(taxon, ends_with("treatmentEnriched")) 
+df_fig_enrich = df_enrich %>%
+    dplyr::filter(diff_treatmentEnriched == 1) %>% 
+    dplyr::arrange(desc(lfc_treatmentEnriched)) %>%
+    dplyr::mutate(direct = ifelse(lfc_treatmentEnriched > 0, "Positive LFC", "Negative LFC"))
+df_fig_enrich$taxon = factor(df_fig_enrich$taxon, levels = df_fig_enrich$taxon)
+df_fig_enrich$direct = factor(df_fig_enrich$direct, 
+                           levels = c("Positive LFC", "Negative LFC"))
+
+fold_chg = df_fig_enrich %>%
+    ggplot(aes(x = taxon, y = lfc_treatmentEnriched, fill = direct)) + 
+    geom_bar(stat = "identity", width = 0.7, color = "black", 
+             position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(ymin = lfc_treatmentEnriched - se_treatmentEnriched, 
+                      ymax = lfc_treatmentEnriched + se_treatmentEnriched), 
+                  width = 0.2, position = position_dodge(0.05), color = "black") + 
+    labs(x = NULL, y = "Log fold change", 
+         title = "LFC of taxa in enriched vs. ambient plots") + 
+    scale_fill_discrete(name = NULL) +
+    scale_color_discrete(name = NULL) +
+    theme_bw() + theme(plot.title = element_text(hjust = 0.5),
+          panel.grid.minor.y = element_blank(),
+          axis.text.x = element_text(angle = 60, hjust = 1))
+    
+fold_chg
+```
+
+## 6. Bray-Curtis analysis to median - for RECHARGE ##
+```{r}
+microbes.fam = transform_sample_counts(microbes.fam, function(x) {x/sum(x)})
+ord_families_bray= ordinate(microbes.fam, "NMDS", "bray") #Stress: 0.101868 
+dist_uni_bray = phyloseq::distance(microbes.fam, method = "bray")
+ordination_df_bray = plot_ordination(microbes.fam, ord_families_bray, type="samples", 
+                                color="herbivory", justDF = TRUE)
+sampledf_dist = data.frame(sample_data(microbes.fam))
+write.csv(ordination_df_bray, "05_Beta_Div/ordination_df_bray.csv")
+
+#Dispersion calculated by nutrients
+disp_treatment_med_bray = betadisper(dist_uni_bray, sampledf_dist$treatment, type = "median")
+df_treat_med_bray = data.frame(dispersionnutrients=disp_treatment_med_bray$distances, sampledf_dist)
+write.csv(df_treat_med_bray, "05_Beta_Div/beta_div_nutrients_med_bray.csv")
+
+
+#Dispersion calculated by consumers
+disp_consumers_med_bray = betadisper(dist_uni_bray, sampledf_dist$herbivory, type = "median")
+df_cons_med_bray = data.frame(dispersionconsumer=disp_consumers_med_bray$distances, sampledf_dist)
+write.csv(df_cons_med_bray, "05_Beta_Div/beta_div_cons_med_bray.csv")
+
+
+```
+
+
+
+
