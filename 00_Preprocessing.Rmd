@@ -1,0 +1,211 @@
+---
+Title: "00_Preprocessing"
+Output: html_document
+Date created: 02/07/24
+Author: Mackenzie Kawahara
+Last edited: 03/12/24 - saving rds files, updating script comments, writing steps 15 on
+Overview: Loaded in all fasta files & renamed, quality control steps in process 
+---
+
+#New version of R required different way to install dada2
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("dada2")
+```
+
+
+#Load libraries
+```{r setup, include=FALSE}
+library(dada2) 
+library(here)
+library(dplyr)
+library(ggplot2)
+```
+
+## 1.Set.seed ##
+```{r}
+set.seed(1) #Creates random numbers that can be reproduced to help with reproducibility of data sets for analysis
+```
+
+## 2.Set path to raw files ##
+```{r}
+path_to_files <- here::here("cutadapt_sequences")
+
+list.files(path_to_files) #this lists all the sequences
+```
+
+## 3.Set path for forward and reverse reads ##
+```{r}
+fwd_seq <- sort(list.files(path_to_files, pattern = "R1_001.fastq.gz", full.names = TRUE)) #if full.name = TRUE, the directory path is prepended to the file names to give a relative file path. if FALSE, then the file names (rather than the paths) are returned
+
+rev_seq <- sort(list.files(path_to_files, pattern = "R2_001.fastq.gz", full.names = TRUE))
+```
+
+## 4.Extract sample names from the fwd files ##
+```{r}
+#Assume name follows: lane1-s###-index--Findex-Rindex-SAMPLENAME_XXX.fastq
+#Column separation:    #1    #2   #3  #4  #5     #6       #7
+samplenames <- sapply(strsplit(basename(fwd_seq), "-"),`[`,7) #Separating into columns based on the "-" and column 7 is the sample names
+
+samplenames <-sapply(strsplit(basename(samplenames), "\\."), `[`,1) #Removes fastq.gz at the end, but still left with the _S*_R1_001
+
+samplenames<- gsub("_S\\d+\\d?\\d?\\d?_R1_001", "", samplenames) #Removes the _R1_001
+samplenames
+```
+
+## 5.Assess read quality distribution ##
+#With the 2022 samples, I did not use cutadapt before coming to R. Thus, the plotQualityProfile will not work because of the 0 or low filter reads (see notion for better explanation)
+```{r}
+plotQualityProfile(fwd_seq, aggregate = TRUE) #'aggregate' if TRUE, compute an aggregate quality profile for all fastq files provided
+plotQualityProfile(rev_seq, aggregate = TRUE)
+```
+
+## 6.Set file destination for files post quality filtering ##
+```{r}
+#This is so that the output of the filtering command can be assigned to file names, separate from our fwd and rev sequence vectors that we have already made
+fwdreads_filt <- file.path(path_to_files, "filterAndTrim", paste0(samplenames, "_F_filt.fastq.gz"))
+revreads_filt <- file.path(path_to_files, "filterAndTrim", paste0(samplenames, "_R_filt.fastq.gz"))
+
+names(fwdreads_filt) <- samplenames #allows us to still apply our sample names to filtered reads
+names(revreads_filt) <- samplenames
+```
+
+
+## 7a.Quality filtering and trimming ##
+```{r}
+#REMEMBER: there must be at least a 20nt overlap between your forward and reverse reads for them to merge into contigs
+#Parameters will change depending on how the data looks
+filteredfastq <- filterAndTrim(fwd_seq, fwdreads_filt,
+                               rev_seq, revreads_filt,
+                               truncLen = c(240, 200), #(fwd,rev) reads shorter than this are discarded
+                             # trimRight = c(50, 75), 
+                             # trimLeft = c(25,25),
+                             # minLen = c(220, 175),
+                             # maxLen = c(302,302),
+                               maxN=0, #this is getting rid of any ambiguous base pairs
+                               maxEE = c(2,2), #setting the amount of expected errors in reads,                                                       increasing this value lets more reads through
+                               truncQ = 2, #truncates reads at the first sign of a quality score equal or less                                              than the set value - Q score of 2 is ~63% chance a base is being                                                called incorrectly
+                               rm.phix = TRUE, #removes any phiX phage genomes, which are often used                                                  by sequencing facilities as controls
+                               compress=TRUE, #should FASTQ files be gzipped? - yes, helps save memory
+                               multithread=TRUE) #allows FASTQ files to be processed in parallel - does NOT                                                      work for windows..so mine can be TRUE
+
+saveRDS(filteredfastq, here::here("00_Preprocessing_Data/filteredfastq.rds"))
+write.csv(filteredfastq, "00_Preprocessing_Data/filteredfastq.csv") #To help create table & phyloseq object
+```
+
+## 7b.Assess number of reads lost ##
+```{r}
+filter_fun = data.frame(filteredfastq)
+ratio = sum(filter_fun$reads.out)/sum(filter_fun$reads.in)
+ratio #0.9132656 so 91.33% of reads kept
+```
+
+## 8.Reupload cutadapt & filter&trim sequences ##
+```{r}
+path_to_filtered_files <- here::here("cutadapt_sequences/filterAndTrim")
+
+filt_fwdreads <- sort(list.files(path_to_filtered_files, pattern = "F_filt.fastq.gz", full.names = TRUE))
+filt_revreads <- sort(list.files(path_to_filtered_files, pattern = "R_filt.fastq.gz", full.names = TRUE))
+
+#Can reassess quality profiles
+plotQualityProfile(filt_fwdreads, aggregate = TRUE)
+plotQualityProfile(filt_revreads, aggregate = TRUE)
+```
+
+## 9.Learn error rates ##
+```{r}
+#Run only on data that has all been sequenced on the same run (i.e. the same MiSeq run)
+#Looking for incorrect nucleotide substitutions as a result of sequencing errors
+#Only uses a subset of your reads to learn the error rates
+
+error_forward = learnErrors(filt_fwdreads, multithread=TRUE) #102903360 total bases in 428764 reads from 24 samples will be used for learning the error rates.
+saveRDS(error_forward, here::here("00_Preprocessing_Data/error_forward.rds"))
+
+
+error_reverse = learnErrors(filt_revreads, multithread=TRUE) #106138800 total bases in 530694 reads from 27 samples will be used for learning the error rates.
+saveRDS(error_reverse, here::here("00_Preprocessing_Data/error_reverse.rds"))
+
+```
+
+## 10.De-replicate reads ##
+```{r}
+#Will help speed up downstream analysis - collapses all identical reads
+fwdreads_filt_derep = derepFastq(filt_fwdreads, verbose=TRUE)
+head(fwdreads_filt_derep)
+
+revreads_filt_derep = derepFastq(filt_revreads, verbose=TRUE)
+head(revreads_filt_derep)
+
+samplenames <-samplenames[-196] #samplenames originally had 197 CH, but after filter&trim there was only 195 so needed to remove the samples that were tossed
+samplenames <-samplenames[-152] #Removed sample name so following lines run
+
+names(fwdreads_filt_derep) = samplenames
+names(revreads_filt_derep) = samplenames
+```
+
+## 11.Sample inference (dada) ##
+```{r}
+#Uses the error rates gathered from the command above to quantify the rate at which an amplicon read is produced from a sample sequence as a function of sequence composition and quality
+#See notion for more details about this step
+
+dadaForward = dada(fwdreads_filt_derep, err=error_forward, multithread=TRUE)
+saveRDS(dadaForward, here::here("00_Preprocessing_Data/dadaForward.rds"))
+
+dadaReverse = dada(revreads_filt_derep, err=error_reverse, multithread=TRUE)
+saveRDS(dadaReverse, here::here("00_Preprocessing_Data/dadaReverse.rds"))
+
+```
+
+## 12.Merge paried ends to create contigs & make an ASV table ##
+```{r}
+#Merging is performed by aligning the denoised forward reads with the reverse-complement of the corresponding denoised reverse reads, and then constructing the merged “contig” sequences. 
+contigs <-mergePairs(dadaForward, fwdreads_filt_derep, dadaReverse, revreads_filt_derep)
+saveRDS(contigs, here::here("00_Preprocessing_Data/contigs.rds"))
+
+seq_table <- makeSequenceTable(contigs)
+dim(seq_table) #In 195 samples we have a total of 9965 contigs
+```
+
+## 13.Remove chimeras & track contig info ##
+```{r}
+seq_table_nochim <-removeBimeraDenovo(seq_table, method="consensus", multithread=TRUE, verbose=TRUE) #Identified 1185 bimeras out of 9965 input sequences
+dim(seq_table_nochim) #In 195 samples we have a total of 8655 contigs (1500 contigs removed)
+
+table(nchar(getSequences(seq_table))) # Contigs range from 240 - 428bp
+#Since these are 16S V4 amplicons, they should be around 250-255-ish base pairs in length
+
+#Only keep those contigs that are from 250-255bp
+seq_table_2<-seq_table[,nchar(colnames(seq_table)) %in% 250:255]
+table(nchar(getSequences(seq_table_2)))
+dim(seq_table_2)
+seq_table_nochim <-seq_table_2
+
+saveRDS(seq_table_nochim, here::here("00_Preprocessing_Data/seq_table_nochim.rds"))
+
+```
+
+## 14.Sanity check & summary table ##
+```{r}
+getN<- function(x) sum(getUniques(x))
+track_reads<-cbind(filteredfastq, sapply(dadaForward, getN), sapply(dadaReverse, getN), sapply(contigs, getN), rowSums(seq_table_nochim))
+
+colnames(track_reads) <- c("filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_reads) <- samplenames
+track_reads
+getN
+```
+
+## 15.Assign taxonomy & create taxonomy table  ##
+```{r}
+silvataxa <- assignTaxonomy(seq_table_nochim, here::here("silva_data/silva_nr99_v138.1_train_set.fa"), multithread = TRUE)
+saveRDS(silvataxa, here::here("00_Preprocessing_Data/silvataxa.rds")) #save and re-load here so that R has enough memory for species assignment
+silvataxa <-readRDS("00_Preprocessing_Data/silvataxa.rds")
+
+silvataxa <-addSpecies(silvataxa, here::here("silva_data/silva_species_assignment_v138.1.fa"))
+saveRDS(silvataxa, here::here("00_Preprocessing_Data/silvataxa.rds"))
+```
+
+#We have now assigned taxonomy to samples
+#Have everything we need to create a phyloseq object - following next script 01_Phyloseq_Object.Rmd
