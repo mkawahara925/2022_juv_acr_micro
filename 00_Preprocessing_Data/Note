@@ -1,0 +1,2 @@
+This folder contains all the data created from the 00_Preprocessing.Rmd script except for: dadaForward.rds and dadaReverse.rds
+These files are too large.
