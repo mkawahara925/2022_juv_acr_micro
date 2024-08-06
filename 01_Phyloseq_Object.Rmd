@@ -1,0 +1,149 @@
+---
+Title: "01_Phyloseq_Object"
+Output: html_document
+Date created: 03/12/24
+Author: Mackenzie Kawahara
+Last edited: 03.29.24 Added step 8 to create phylogenetic tree
+Overview: Steps to create phyloseq object after 00_Preprocessing.Rmd script 
+---
+#This script is adapted from Alex Vompe's Github 'recharge_micro_phyloseq_setup.R'
+```{r}
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(scales)
+library(grid) 
+library(reshape2)
+library(phyloseq)
+library(readxl)
+library(microbiome)
+library(decontam)
+```
+
+## 1.Restructure ASV and taxonomy tables ##
+```{r}
+#Script copied from Alex Vompe's github "file file pre-processing for phyloseq.R"
+#Swaps rows & columns to make it easier later to align all objects needed to make the phyloseq object
+library(reshape2)
+
+#Transpose ASV table
+asvtab = readRDS("00_Preprocessing_Data/seq_table_nochim.rds")
+asvtabcorrected = t(asvtab)
+write.csv(asvtabcorrected, "01_Phyloseq_Object_Data/corrected_asv_table.csv")
+
+#Save taxonomy table as csv for downstream
+taxtab = readRDS("00_Preprocessing_Data/silvataxa.rds")
+write.csv(taxtab, "01_Phyloseq_Object_data/seq_taxa.csv")
+```
+
+## 2.Import data ##
+```{r}
+sample_data <- read_excel("01_Phyloseq_Object_Data/phyloseq_data.xlsx", sheet = "sample_data")
+asv_table <- read_excel("01_Phyloseq_Object_Data/phyloseq_data.xlsx", sheet = "asv_table")
+taxa_table <- read_excel("01_Phyloseq_Object_Data/phyloseq_data.xlsx", sheet = "taxa_table")
+```
+
+## 3.Make phyloseq object ##
+```{r}
+asv_table = asv_table %>%
+  tibble::column_to_rownames("asv")
+taxa_table = taxa_table %>% 
+  tibble::column_to_rownames("asv")
+sample_data = sample_data %>% 
+  tibble::column_to_rownames("sample")
+asv_table = as.matrix(asv_table)
+taxa_table = as.matrix(taxa_table)
+OTU = otu_table(asv_table, taxa_are_rows = TRUE)
+TAXA = tax_table(taxa_table)
+samples = sample_data(sample_data)
+
+ps_object = phyloseq(OTU, TAXA, samples)
+ps_object #8655 taxa in 195 samples / 8655 taxa by 7 taxonomoic ranks
+
+```
+
+## 4.Remove mitochondira, chloroplasts, & any other non-bacterial/archaeal seq ##
+```{r}
+ps_object = ps_object %>% subset_taxa(Family!= "Mitochondria" | is.na(Family))
+ps_object = ps_object %>% subset_taxa(Order!= "Chloroplast" | is.na(Order))
+ps_object = ps_object %>% subset_taxa(Kingdom!= "Eukaryota" | is.na(Kingdom))
+ps_object = ps_object %>% subset_taxa(Kingdom!= "NA" | is.na(Kingdom))
+ps_object #8013 taxa in 195 samples / 8013 taxa by 7 taxonomic ranks
+
+#use head(sample_data) or head(tax_table) to view objects in ps_object
+```
+
+## 5.Check for contaminants using prevalence and threshold of 0.5 (more conservative) ##
+```{r}
+#isContaminant(decontam) - prevalence: contaminants are identified by increased prevalence in neg. controls
+#in pyloseq_data.xlsx, renamed 'NC1' and 'NC3' in 'cage' column to 'control' so that they are both picked up in the next line of code
+sample_data(ps_object)$is.neg = sample_data(ps_object)$cage == "control"
+contamdf.prev = isContaminant(ps_object, method = "prevalence", neg = "is.neg", threshold = 0.5)
+table(contamdf.prev$contaminant) #3 contam ASVs
+head(which(contamdf.prev$contaminant))
+
+#Remove contaminants
+physeq.noncont = prune_taxa(!contamdf.prev$contaminant, ps_object)
+```
+
+## 6.Further cleanup & filtering ##
+```{r}
+#Remove controls as we have used them for decontam
+physeq.noncont = subset_samples(physeq.noncont, cage!="control")
+
+#Remove singletons: read with a sequence that is present in exactly once, i.e. unique among the reads (singletons have higher chances of being erroneous than other sequences <-Kelly Shannon)
+NoSingle = prune_taxa(taxa_sums(physeq.noncont) > 1, physeq.noncont)
+
+#Let's get the final numbers and remove low-read samples
+NoSingle #193 samples, 8009 taxa
+NoSingleover1000 = prune_samples(sample_sums(NoSingle)
+                                 >=1000, NoSingle) 
+NoSingleover1000
+
+#Reduce to 175 samples
+#195-> minus 2 NC = 193 -> minus the 13 samples will redo & low reads from the start = 177 -> reads lower than 1000 is only 2 = 175
+```
+
+## 7.Save filtered data objects ##
+```{r}
+#Extract the sequences of the filtered object to create phylogenetic tree
+write.csv(tax_table(NoSingleover1000), "01_Phyloseq_Object_Data/phyloseq_filtered.csv")
+
+#Change ASV names for more simple work
+taxa_names(NoSingleover1000) = paste0("ASV", seq(ntaxa(NoSingleover1000)))
+tax_table(NoSingleover1000) = cbind(tax_table(NoSingleover1000),
+                            rownames(tax_table(NoSingleover1000)))
+head(taxa_names(NoSingleover1000))
+
+#Export filtered sequence and taxonomy tables for full phyloseq object
+saveRDS(NoSingleover1000, "01_Phyloseq_Object_Data/filtered_phyloseq.rds")
+saveRDS(otu_table(NoSingleover1000), "01_Phyloseq_Object_Data/filtered_seq_table.rds")
+saveRDS(sample_data(NoSingleover1000), "01_Phyloseq_Object_Data/filtered_sample_data.rds")
+saveRDS(tax_table(NoSingleover1000), "01_Phyloseq_Object_Data/filtered_tax_table.rds")
+```
+
+## 8. Prep fasta file to build tree for phyloseq object ##
+```{r}
+#Load the libraries
+library(Biostrings)
+library(here)
+library(tidyverse)
+
+#Read in all sequences and make fasta file
+df_seqs = read.csv(here::here("01_Phyloseq_Object_Data/phyloseq_filtered.csv"), header = TRUE)
+df_seqs = column_to_rownames(df_seqs, var = "X")
+
+seqs = rownames(df_seqs)
+length(seqs) #8009
+
+seqs_strings = DNAStringSet(seqs)
+names(seqs_strings) = paste0("ASV", seq(length(seqs_strings)))
+writeXStringSet(x = seqs_strings, "01_Phyloseq_Object_Data/seqs.fa")
+#Go to terminal to use mothur to align sequences and create tree
+```
+
+
+
+
+
+

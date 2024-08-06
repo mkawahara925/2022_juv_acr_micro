@@ -1,0 +1,400 @@
+---
+Title: "02_Rarefaction_Curves"
+Output: html_document
+Date created: 03/21/24
+Author: Mackenzie Kawahara
+Last edited: 04.09.24 Fixed creating rarefied object at 1000/5000 depth & cleaned up code 
+Overview: Steps to create rarefaction curves after creating phyloseq object in 01.Phyloseq_Object.Rmd script & rarify ps object
+---
+#This script is modified from Alex Vompe's Github 'supplemental figure 3.R'
+
+```{r}
+library(phyloseq)
+library(plyr)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+library(tidyverse)
+```
+
+## 1.Load & rename filtered phyloseq object ##
+```{r}
+sample_filt = readRDS("01_Phyloseq_Object_Data/filtered_sample_data.rds")
+seqtab_filt = readRDS("01_Phyloseq_Object_Data/filtered_seq_table.rds") #OTU table
+taxtab_filt = readRDS("01_Phyloseq_Object_Data/filtered_tax_table.rds")
+tree_filt = read_tree("01_Phyloseq_Object_Data/seqs.filter.tre")
+
+microbes.filt = phyloseq(sample_filt, seqtab_filt, taxtab_filt, tree_filt) 
+```
+
+## 2a.Function for rarefaction curves ##
+```{r}
+#READ:Before starting to calculate rarefaction curves in the future, see Notion 02_Rarefaction_Curves.Rmd note!
+calculate_rarefaction_curves <- function(microbes.filt, measures, depths) {
+  require('plyr') # ldply
+  require('reshape2') # melt
+  
+  estimate_rarified_richness <- function(microbes.filt, measures, depth) {
+    if(max(sample_sums(microbes.filt)) < depth) return()
+    microbes.filt <- prune_samples(sample_sums(microbes.filt) >= depth, microbes.filt)
+    
+    rarified_microbes.filt <- rarefy_even_depth(microbes.filt, depth, verbose = FALSE)
+    
+    alpha_diversity <- estimate_richness(rarified_microbes.filt, measures = measures)
+    
+    # as.matrix forces the use of melt.array, which includes the Sample names (rownames)
+    molten_alpha_diversity <- melt(as.matrix(alpha_diversity), varnames = c('Sample', 'Measure'), value.name = 'Alpha_diversity')
+    
+    molten_alpha_diversity
+  }
+  
+  names(depths) <- depths # this enables automatic addition of the Depth to the output by ldply
+  rarefaction_curve_data <- ldply(depths, estimate_rarified_richness, microbes.filt = microbes.filt, measures = measures, .id = 'Depth', .progress = ifelse(interactive(), 'text', 'none'))
+  
+  #convert Depth from factor to numeric
+  rarefaction_curve_data$Depth <- as.numeric(levels(rarefaction_curve_data$Depth))[rarefaction_curve_data$Depth]
+  
+  rarefaction_curve_data
+}
+```
+
+## 2b. Rarefaction Curve Data (Shannon, Observed, Simpson, InvSimpson, Chao1) ##
+```{r}
+rarefaction_curve_data <- calculate_rarefaction_curves(microbes.filt, c('Observed', 'Shannon', 'Simpson','InvSimpson','Chao1'), rep(c(1, 10, 100, 1:100 * 1000), each = 10))
+summary(rarefaction_curve_data)
+
+rarefaction_curve_data_summary <- ddply(rarefaction_curve_data, c('Depth', 'Sample', 'Measure'), summarise, Alpha_diversity_mean = mean(Alpha_diversity), Alpha_diversity_sd = sd(Alpha_diversity))
+
+sampledf = data.frame(sample_data(microbes.filt))
+sampledf = tibble::rownames_to_column(sampledf, "Sample")
+sampledf$Sample = gsub('-','.',sampledf$Sample)
+head(sampledf)
+
+rarefaction_curve_data_summary_verbose <- merge(rarefaction_curve_data_summary, sampledf, by = "Sample")
+rarefaction_curve_data_summary_verbose_shan = subset(rarefaction_curve_data_summary_verbose, Measure=="Shannon")
+rarefaction_curve_data_summary_verbose_obs = subset(rarefaction_curve_data_summary_verbose, Measure=="Observed")
+rarefaction_curve_data_summary_verbose_simp = subset(rarefaction_curve_data_summary_verbose, Measure=="Simpson")
+rarefaction_curve_data_summary_verbose_invsimp = subset(rarefaction_curve_data_summary_verbose, Measure=="InvSimpson")
+rarefaction_curve_data_summary_verbose_chao = subset(rarefaction_curve_data_summary_verbose, Measure=="Chao1")
+```
+
+## 3.Plot rarefaction curves ##
+#Shannon
+```{r}
+p1_rare_shan =ggplot(
+  data = rarefaction_curve_data_summary_verbose_shan,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+
+  ylim(0,6)+
+  ylab("Shannon Diversity")+
+  ggtitle("Shannon Diversity by Random Read \n Depth Subsampling by Sample")
+#Based on graphs, looks like around 1000 will be depth cut off
+
+p2_rare_shan=ggplot(
+  data = rarefaction_curve_data_summary_verbose_shan,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0,3)+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("Shannon Diversity")+
+  ggtitle("Average Shannon Diversity by \n Random Read Depth Subsampling")
+
+#Based on graphs, looks like around 1000 will be depth cut off
+
+```
+
+#Observed richness
+```{r}
+p1_rare_obs =ggplot(
+  data = rarefaction_curve_data_summary_verbose_obs,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+ylim(0,1000)+
+  ylab("ASV Richness")+
+  ggtitle("ASV Richness by Random Read \n Depth Subsampling by Sample")
+
+p2_rare_obs =ggplot(
+  data = rarefaction_curve_data_summary_verbose_obs,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0,100)+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("ASV Richness")+
+  ggtitle("Average ASV Richness by \n Random Read Depth Subsampling")
+
+#Based on graph and talking with AV, depth cut off should be around 5000 for observed
+```
+
+#Simpson
+```{r}
+p1_rare_simp =ggplot(
+  data = rarefaction_curve_data_summary_verbose_simp,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+
+  ylim(0,1)+
+  ylab("Simpson Diversity")+
+  ggtitle("Simpson Diversity by Random Read \n Depth Subsampling by Sample")
+
+p2_rare_simp =ggplot(
+  data = rarefaction_curve_data_summary_verbose_simp,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0,0.75)+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("Simpson Diversity")+
+  ggtitle("Average Simpson Diversity by \n Random Read Depth Subsampling")
+
+#Based on graph depth cut off should be around 5000
+```
+
+#InvSimpson
+```{r}
+p1_rare_invsimp =ggplot(
+  data = rarefaction_curve_data_summary_verbose_invsimp,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+
+  ylim(0,100)+
+  ylab("Inverse Simpson Diversity")+
+  ggtitle("Inverse Simpson Diversity by Random Read \n Depth Subsampling by Sample")
+
+p2_rare_invsimp =ggplot(
+  data = rarefaction_curve_data_summary_verbose_invsimp,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0,10)+
+  geom_vline(xintercept = 1000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("Inverse Simpson Diversity")+
+  ggtitle("Average Inverse Simpson Diversity by \n Random Read Depth Subsampling")
+
+#Based on graph depth cut off should be around 1000
+```
+
+#Chao1
+```{r}
+p1_rare_chao =ggplot(
+  data = rarefaction_curve_data_summary_verbose_chao,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+
+  ylim(0,1000)+
+  ylab("Chao1 Diversity")+
+  ggtitle("Chao1 Diversity by Random Read \n Depth Subsampling by Sample")
+
+p2_rare_chao =ggplot(
+  data = rarefaction_curve_data_summary_verbose_chao,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0, 100)+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("Chao1 Diversity")+
+  ggtitle("Average Chao1 Diversity by \n Random Read Depth Subsampling")
+
+#Based on graph depth cut off should be around 5000
+```
+
+## 4. Repeat steps 2-3 for Faith's Phylogenetic Diversity ##
+```{r}
+calculate_rarefaction_curves_wPD <- function(microbes.filt, measures, depths) {
+  require('plyr') # ldply
+  require('reshape2') # melt
+  
+  estimate_rarified_richness <- function(microbes.filt, measures, depth) {
+    if(max(sample_sums(microbes.filt)) < depth) return()
+    microbes.filt <- prune_samples(sample_sums(microbes.filt) >= depth, microbes.filt)
+    
+    rarified_microbes.filt <- rarefy_even_depth(microbes.filt, depth, verbose = FALSE)
+    
+    alpha_diversity <- estimate_richness_wPD(rarified_microbes.filt, measures = measures)
+    
+    # as.matrix forces the use of melt.array, which includes the Sample names (rownames)
+    molten_alpha_diversity <- melt(as.matrix(alpha_diversity), varnames = c('Sample', 'Measure'), value.name = 'Alpha_diversity')
+    
+    molten_alpha_diversity
+  }
+  
+  names(depths) <- depths # this enables automatic addition of the Depth to the output by ldply
+  rarefaction_curve_data <- ldply(depths, estimate_rarified_richness, microbes.filt = microbes.filt, measures = measures, .id = 'Depth', .progress = ifelse(interactive(), 'text', 'none'))
+  
+  #convert Depth from factor to numeric
+  rarefaction_curve_data$Depth <- as.numeric(levels(rarefaction_curve_data$Depth))[rarefaction_curve_data$Depth]
+  
+  rarefaction_curve_data
+}
+
+rarefaction_curve_data_faith <- calculate_rarefaction_curves_wPD(microbes.filt=microbes.filt, measures=("FaithPD"), depth=rep(c(1, 10, 100, 1:100 * 1000), each = 10))
+summary(rarefaction_curve_data_faith)
+
+rarefaction_curve_data_summary_faith <- ddply(rarefaction_curve_data_faith, c('Depth', 'Sample', 'Measure'), summarise, Alpha_diversity_mean = mean(Alpha_diversity), Alpha_diversity_sd = sd(Alpha_diversity))
+
+rarefaction_curve_data_summary_verbose_faith <- merge(rarefaction_curve_data_summary_faith, sampledf, by = "Sample")
+rarefaction_curve_data_summary_verbose_faith = subset(rarefaction_curve_data_summary_verbose_faith, Measure=="FaithPD")
+
+#Plot Faith's PD graphs
+p1_rare_faith =ggplot(
+  data = rarefaction_curve_data_summary_verbose_faith,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean,
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    group=Sample)) + 
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  xlim(0,10000)+
+  ylim(0,100)+
+  ylab("Faith P Diversity")+
+  ggtitle("Faith Diversity by Random Read \n Depth Subsampling by Sample")
+
+p2_rare_faith =ggplot(
+  data = rarefaction_curve_data_summary_verbose_faith,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean)) + 
+  stat_summary(fun=median, colour="red", geom="line") + 
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  xlim(0, 10000)+
+  ylim(0, 25)+
+  geom_vline(xintercept = 5000, linewidth=2, linetype="dashed", color="darkred")+
+  ylab("Faith Phylogenetic Diversity")+
+  ggtitle("Average Faith Phylogenetic Diversity by \n Random Read Depth Subsampling")
+
+#Based on graph depth cut off should be around 5000
+``` 
+
+## 4. Rarefied phyloseq at 1000 depth ##
+```{r}
+#Randomly subsampling to even depth
+#rrarefy requires a dataframe, so save microbes.filt otu_table as df
+otu_table <-as.matrix(as.data.frame(t(microbes.filt@otu_table)))
+View(otu_table)
+
+#1000 depth - Shannon diversity is captured by 1000 reads based on rarefaction curves
+rarefied_df <-rrarefy(otu_table, sample=1000) #change sample = () to whichever depth needed for alpha diversity analysis
+sort(rowSums(rarefied_df)) #sample_sums
+
+#Make new phyloseq object after subsampling to even depth
+rare_samData <-microbes.filt@sam_data
+rare_taxTable <-microbes.filt@tax_table
+rare_otuTable <-t(rarefied_df) #t here to flip back so phyloseq command works
+rare_tree <-microbes.filt@phy_tree
+
+microbes_rare <-phyloseq(rare_samData, rare_taxTable, otu_table(rare_otuTable, taxa_are_rows=TRUE), rare_tree)
+
+#Make sure there aren't any taxa present that aren't actually in any sample after randomly suTRUE#Make sure there aren't any taxa present that aren't actually in any sample after randomly subsampling
+microbes_rare <-prune_taxa(taxa_sums(microbes_rare@otu_table) >0, microbes_rare)
+
+saveRDS(microbes_rare, "02_Rarefaction_Curves/microbes_rare.rds")
+```
+
+
+## 5. Rarefied phyloseq at 5000 depth ##
+```{r}
+#5000 depth - sample richness is captured by 5000 reads based on rarefaction curves
+otu_table_5000 <-as.matrix(as.data.frame(t(microbes.filt@otu_table)))
+View(otu_table_5000)
+
+rarefied_df_5000 <-rrarefy(otu_table_5000, sample=5000) #change sample = () to whichever depth needed for alpha diversity analysis
+sort(rowSums(rarefied_df_5000))
+
+#Make new phyloseq object after subsampling to even depth
+rare_samData <-microbes.filt@sam_data
+rare_taxTable <-microbes.filt@tax_table
+rare_otuTable_5000 <-t(rarefied_df_5000)
+rare_tree <-microbes.filt@phy_tree
+
+microbes_rare_5000 <-phyloseq(rare_samData, rare_taxTable, otu_table(rare_otuTable_5000, taxa_are_rows=TRUE), rare_tree)
+
+#Make sure there aren't any taxa present that aren't actually in any sample after randomly suTRUE#Make sure there aren't any taxa present that aren't actually in any sample after randomly subsampling
+microbes_rare_5000 <-prune_taxa(taxa_sums(microbes_rare_5000@otu_table) >0, microbes_rare_5000)
+```
+
+
