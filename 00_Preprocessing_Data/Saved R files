@@ -1,1 +1,2 @@
-
+This folder contains all the data created from the 00_Preprocessing.Rmd script except for: dadaForward.rds, dadaReverse.rds, error_forward.rds
+and error_reverse.rds. These files are t
